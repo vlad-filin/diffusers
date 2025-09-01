@@ -1,5 +1,5 @@
 from pathlib import Path
-
+from tqdm import tqdm
 import torch
 from torch.utils.data import DataLoader
 
@@ -33,20 +33,15 @@ def main():
     sd = SD15(args.pretrained_model_name_or_path, device=device, dtype=dtype)
 
     # LoRA
-    lora = add_lora_to_unet(sd.unet, rank=args.lora_rank)
+    #lora = add_lora_to_unet(sd.unet, rank=args.lora_rank)
     # Ensure LoRA params live on same device/dtype as UNet
-    lora.to(device=device, dtype=sd.unet.dtype)
-
+    #lora.to(device=device, dtype=sd.unet.dtype)
+    trainable_params = add_lora_to_unet(sd.unet, rank=args.lora_rank)
+    opt= torch.optim.AdamW(trainable_params, lr=args.lr, weight_decay=args.weight_decay, betas=(args.adam_beta1, args.adam_beta2))
     # PickScore
     pick = PickScore().to(device)
 
-    # Optimizer (AdamW)
-    opt = torch.optim.AdamW(
-        lora.parameters(),
-        lr=args.lr,
-        betas=(args.adam_beta1, args.adam_beta2),
-        weight_decay=args.weight_decay,
-    )
+
 
     # Draft config
     draft_cfg = DraftConfig(
@@ -72,7 +67,7 @@ def main():
     # Training loop
     global_step = 0
     scaler = torch.cuda.amp.GradScaler(enabled=(args.mixed_precision == "fp16"))
-
+    progress = tqdm(total=args.train_steps, desc="Training", dynamic_ncols=True)
     while global_step < args.train_steps:
         for batch_prompts in train_loader:
             if global_step >= args.train_steps:
@@ -113,7 +108,7 @@ def main():
                 opt.step()
 
             global_step += 1
-
+            progress.update(1)
             # Sampling hook
             if (global_step % args.sample_every == 0) or (global_step == 1):
                 try:

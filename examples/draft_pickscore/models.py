@@ -1,16 +1,16 @@
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
-
+import inspect
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler
-from diffusers.models.attention_processor import LoRAAttnProcessor2_0, AttnProcsLayers
+from diffusers.loaders import AttnProcsLayers
+from diffusers.models.attention_processor import LoRAAttnProcessor
 from transformers import AutoTokenizer, CLIPTextModel, AutoModel
-
 from utils import clip_preprocess_tensor
-
+from peft import LoraConfig
 
 # -----------------------------
 # Dataset
@@ -73,36 +73,22 @@ class PickScore:
 # -----------------------------
 # LoRA utilities
 # -----------------------------
-def add_lora_to_unet(unet: UNet2DConditionModel, rank: int) -> AttnProcsLayers:
-    lora_attn_procs = {}
-    for name in unet.attn_processors.keys():
-        # Determine dims for this processor
-        if name.endswith("attn1.processor"):
-            cross_attention_dim = None
-        else:
-            cross_attention_dim = unet.config.cross_attention_dim
+def add_lora_to_unet(unet, rank: int = 16):
+    """
+    0.35.1-compatible LoRA install for SD 1.5 UNet.
+    Uses PEFT LoraConfig + unet.add_adapter; returns the trainable params list.
+    """
+    unet_lora_cfg = LoraConfig(
+        r=rank,
+        lora_alpha=rank,
+        init_lora_weights="gaussian",
+        target_modules=["to_k", "to_q", "to_v", "to_out.0"],
+    )
+    # installs LoRA layers internally (no adapter_name needed here)
+    unet.add_adapter(unet_lora_cfg)
 
-        if name.startswith("mid_block"):
-            hidden_size = unet.config.block_out_channels[-1]
-        elif name.startswith("up_blocks"):
-            block_id = int(name.split(".")[1])
-            hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
-        elif name.startswith("down_blocks"):
-            block_id = int(name.split(".")[1])
-            hidden_size = unet.config.block_out_channels[block_id]
-        else:
-            continue
-
-        # Use positional for hidden_size to be robust across diffusers versions
-        lora_attn_procs[name] = LoRAAttnProcessor2_0(
-            hidden_size, cross_attention_dim=cross_attention_dim, rank=rank
-        )
-
-    unet.set_attn_processor(lora_attn_procs)
-    # Return a convenience container with trainable params
-    lora_layers = AttnProcsLayers(unet.attn_processors)
-    return lora_layers
-
+    # return only the LoRA params (what the official guide optimizes)
+    return [p for p in unet.parameters() if p.requires_grad]
 
 # -----------------------------
 # SD1.5 wrapper
@@ -126,10 +112,13 @@ class SD15:
 
         self.vae_scale_factor = 0.18215
 
+        self.vae.eval()
+        for p in self.vae.parameters():
+            p.requires_grad_(False)
     def encode_text(self, prompts: List[str]):
         tok = self.tokenizer(
             prompts,
-            padding=True,
+            padding="max_length",
             truncation=True,
             max_length=self.tokenizer.model_max_length,
             return_tensors="pt",
@@ -141,7 +130,6 @@ class SD15:
     def get_uncond_emb(self, batch_size: int):
         return self.encode_text([""] * batch_size)
 
-    @torch.no_grad()
     def vae_decode(self, latents: torch.Tensor) -> torch.Tensor:
         latents = latents / self.vae_scale_factor
         imgs = self.vae.decode(latents).sample
