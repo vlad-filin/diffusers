@@ -88,7 +88,7 @@ def save_samples(
     write_header = not csv_path.exists()
 
     device = sd.unet.device
-    gen = torch.Generator(device=device).manual_seed(seed + step)
+    gen = torch.Generator(device=device).manual_seed(seed)
 
     with open(csv_path, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)

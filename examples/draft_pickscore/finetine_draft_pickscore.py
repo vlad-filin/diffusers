@@ -68,6 +68,9 @@ def main():
     global_step = 0
     scaler = torch.cuda.amp.GradScaler(enabled=(args.mixed_precision == "fp16"))
     progress = tqdm(total=args.train_steps, desc="Training", dynamic_ncols=True)
+    lora_dir = out_dir / f"lora_sd15_draft_rank{args.lora_rank}_steps{args.train_steps}"
+    sd.unet.save_attn_procs(lora_dir)
+    print(f"Saved LoRA to {lora_dir}")
     while global_step < args.train_steps:
         for batch_prompts in train_loader:
             if global_step >= args.train_steps:
@@ -157,9 +160,9 @@ def main():
     )
 
     # Save LoRA weights
-    lora_path = out_dir / f"lora_unet_rank{args.lora_rank}_steps{args.train_steps}.pt"
-    torch.save(lora.state_dict(), lora_path)
-    print(f"Saved LoRA weights to {lora_path}")
+    lora_dir = out_dir / f"lora_sd15_draft_rank{args.lora_rank}_steps{args.train_steps}"
+    sd.unet.save_attn_procs(lora_dir)
+    print(f"Saved LoRA to {lora_dir}")
 
 
 if __name__ == "__main__":

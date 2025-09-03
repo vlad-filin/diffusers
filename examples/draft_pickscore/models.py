@@ -31,13 +31,14 @@ class PromptDataset(Dataset):
 # -----------------------------
 @dataclass
 class PickScore:
-    processor_name: str = "laion/CLIP-ViT-H-14-laion2B-s32B-b79K"
-    model_name: str = "yuvalkirstain/PickScore_v1"
-
+    #processor_name: str = "laion/CLIP-ViT-H-14-laion2B-s32B-b79K"
+    #model_name: str = "yuvalkirstain/PickScore_v1"
+    processor_name = "/workspace/.cache/huggingface/hub/models--laion--CLIP-ViT-H-14-laion2B-s32B-b79K/snapshots/1c2b8495b28150b8a4922ee1c8edee224c284c0c"
+    model_name  = "/workspace/.cache/huggingface/hub/models--yuvalkirstain--PickScore_v1/snapshots/a4e4367c6dfa7288a00c550414478f865b875800"
     def __post_init__(self):
-        self.text_tokenizer = AutoTokenizer.from_pretrained(self.processor_name)
-        self.model = AutoModel.from_pretrained(self.model_name)
-        self.model.eval()
+        kw = dict(local_files_only=True, cache_dir="/workspace/.cache/huggingface")
+        self.text_tokenizer = AutoTokenizer.from_pretrained(self.processor_name, **kw)
+        self.model = AutoModel.from_pretrained(self.model_name, **kw)
         for p in self.model.parameters():
             p.requires_grad_(False)
 
@@ -66,7 +67,7 @@ class PickScore:
         # Scale
         logit_scale = self.model.logit_scale.exp()
         # Cosine similarity
-        scores = (logit_scale * (text_embs @ image_embs.T)).diagonal()
+        scores = logit_scale *(text_embs * image_embs).sum(dim=-1)
         return scores
 
 
@@ -100,12 +101,12 @@ class SD15:
     dtype: torch.dtype
 
     def __post_init__(self):
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, subfolder="tokenizer")
-        self.text_encoder = CLIPTextModel.from_pretrained(self.model_name, subfolder="text_encoder")
-        self.vae = AutoencoderKL.from_pretrained(self.model_name, subfolder="vae")
-        self.unet = UNet2DConditionModel.from_pretrained(self.model_name, subfolder="unet")
-        self.scheduler = DDIMScheduler.from_pretrained(self.model_name, subfolder="scheduler")
-
+        kw = dict(local_files_only=True, cache_dir="/workspace/.cache/huggingface")
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, subfolder="tokenizer", **kw)
+        self.text_encoder = CLIPTextModel.from_pretrained(self.model_name, subfolder="text_encoder", **kw)
+        self.vae = AutoencoderKL.from_pretrained(self.model_name, subfolder="vae", **kw)
+        self.unet = UNet2DConditionModel.from_pretrained(self.model_name, subfolder="unet", **kw)
+        self.scheduler = DDIMScheduler.from_pretrained(self.model_name, subfolder="scheduler", **kw)
         self.text_encoder.to(self.device, dtype=self.dtype)
         self.vae.to(self.device, dtype=self.dtype)
         self.unet.to(self.device, dtype=self.dtype)
